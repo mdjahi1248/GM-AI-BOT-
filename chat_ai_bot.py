@@ -4,118 +4,101 @@ import base64
 import os
 
 # =========================
-# ENV VARIABLES (Railway)
+# 🔑 ENV VARIABLES (Railway/GitHub)
 # =========================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+HF_API_KEY = os.getenv("HF_API_KEY")  # HuggingFace free token
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # =========================
-# 🔤 TEXT AI
+# 🤖 TEXT AI (Groq)
 # =========================
-def ask_ai_text(text):
-    url = "https://api.openai.com/v1/chat/completions"
+def ai_reply(text):
+    url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
 
+    system_prompt = """
+You are a smart friendly AI.
+You understand Bangla, English, Hindi, Nepali.
+Reply naturally in the user's language.
+"""
+
     data = {
-        "model": "gpt-4.1-mini",
+        "model": "llama-3.1-8b-instant",
         "messages": [
-            {"role": "system", "content": "You are a friendly multilingual AI. Understand Bangla, English, Hindi, Nepali. Reply naturally in the user's language."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": text}
         ],
-        "max_tokens": 500
+        "temperature": 0.7,
+        "max_tokens": 400
     }
 
     r = requests.post(url, headers=headers, json=data, timeout=60)
-    return r.json()["choices"][0]["message"]["content"]
+    res = r.json()
+
+    if "choices" not in res:
+        return "⚠️ AI এখন কাজ করছে না, পরে চেষ্টা করো।"
+
+    return res["choices"][0]["message"]["content"]
 
 # =========================
-# 🖼️ IMAGE AI
+# 🖼️ IMAGE AI (HuggingFace - FREE)
 # =========================
-def ask_ai_image(image_path, caption="Describe this image"):
-    with open(image_path, "rb") as img:
-        b64 = base64.b64encode(img.read()).decode()
+def image_reply(image_bytes):
+    api_url = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base"
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
 
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    r = requests.post(api_url, headers=headers, data=image_bytes, timeout=60)
+    res = r.json()
 
-    data = {
-        "model": "gpt-4.1-mini",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "এই ছবিটা কী, কিসের জন্য, কী করতে হবে — Bangla, English, Hindi, Nepali বুঝে উত্তর দাও।"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 700
-    }
+    if isinstance(res, dict) and res.get("error"):
+        return "⚠️ ছবি বুঝতে সমস্যা হচ্ছে, পরে চেষ্টা করো।"
 
-    r = requests.post(url, headers=headers, json=data, timeout=60)
-    return r.json()["choices"][0]["message"]["content"]
+    if isinstance(res, list) and "generated_text" in res[0]:
+        caption = res[0]["generated_text"]
+        return f"🖼️ আমি ছবিতে দেখছি: {caption}\n\n👉 মনে হচ্ছে এটা কোনো খাবার/বস্তু/দৃশ্য। চাইলে বিস্তারিত জিজ্ঞেস করো 🙂"
+
+    return "⚠️ ছবি বুঝতে পারলাম না।"
 
 # =========================
-# 📌 COMMAND
+# 📌 START
 # =========================
-@bot.message_handler(commands=["start"])
+@bot.message_handler(commands=['start'])
 def start(m):
     bot.reply_to(m,
         "🤖 হ্যালো! আমি Vision AI Bot.\n\n"
-        "✍️ লেখা পাঠাও\n"
-        "🖼️ ছবি পাঠাও — আমি বলবো এটা কী, কিসের জন্য, কী করতে হবে।\n\n"
+        "✍️ লেখা পাঠালে — AI উত্তর দিবে\n"
+        "📷 ছবি পাঠালে — এটা কী দেখা যাচ্ছে বলবো\n\n"
         "আমি Bangla, English, Hindi, Nepali বুঝি 🙂"
     )
 
 # =========================
 # 💬 TEXT HANDLER
 # =========================
-@bot.message_handler(content_types=["text"])
-def text_chat(m):
-    try:
-        bot.send_chat_action(m.chat.id, "typing")
-        reply = ask_ai_text(m.text)
-        bot.reply_to(m, reply)
-    except Exception as e:
-        print("TEXT ERROR:", e)
-        bot.reply_to(m, "⚠️ AI এখন কাজ করছে না, পরে আবার চেষ্টা করো।")
+@bot.message_handler(func=lambda m: m.text is not None)
+def chat(m):
+    bot.send_chat_action(m.chat.id, 'typing')
+    reply = ai_reply(m.text)
+    bot.reply_to(m, reply)
 
 # =========================
-# 🖼️ PHOTO HANDLER
+# 📷 PHOTO HANDLER
 # =========================
-@bot.message_handler(content_types=["photo"])
-def photo_chat(m):
-    try:
-        bot.send_chat_action(m.chat.id, "typing")
+@bot.message_handler(content_types=['photo'])
+def photo(m):
+    bot.send_chat_action(m.chat.id, 'typing')
+    file_id = m.photo[-1].file_id
+    file_info = bot.get_file(file_id)
+    file = bot.download_file(file_info.file_path)
 
-        file_info = bot.get_file(m.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-
-        file_name = "image.jpg"
-        with open(file_name, "wb") as f:
-            f.write(downloaded_file)
-
-        caption = m.caption if m.caption else "Describe this image"
-        reply = ask_ai_image(file_name, caption)
-
-        bot.reply_to(m, reply)
-        os.remove(file_name)
-
-    except Exception as e:
-        print("IMAGE ERROR:", e)
-        bot.reply_to(m, "⚠️ ছবি বুঝতে সমস্যা হচ্ছে, পরে আবার পাঠাও।")
+    reply = image_reply(file)
+    bot.reply_to(m, reply)
 
 # =========================
-print("🤖 Vision AI Bot Running...")
+print("🤖 Vision AI Bot running...")
 bot.infinity_polling()
